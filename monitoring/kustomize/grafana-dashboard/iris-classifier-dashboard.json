@@ -1,0 +1,232 @@
+{
+  "uid": "iris-classifier-inference",
+  "title": "KServe - Iris Classifier",
+  "tags": [
+    "kubeflow",
+    "kserve",
+    "ml-inference"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "editable": true,
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Prediction requests per second",
+      "description": "Measures the rate of prediction-stage calls handled by the Iris classifier. Each observation represents a prediction request, not an individual Iris sample; a request containing multiple samples still counts as one call. During a load test, expect this value to rise as request concurrency increases. A falling rate under sustained load can indicate saturation, errors, or reduced client throughput. This metric alone does not measure failed requests.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(request_predict_seconds_count{namespace=\"kubeflow\",service=\"iris-classifier-predictor\",model_name=\"iris-classifier\"}[$__rate_interval]))",
+          "legendFormat": "predict calls/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Average prediction-stage latency",
+      "description": "Shows the average duration of the prediction stage in seconds, calculated as the increase in cumulative prediction time divided by the increase in prediction-call count over the selected rate window. Lower values generally indicate faster prediction processing. A rising average under load can indicate CPU contention, resource limits, or application-level bottlenecks. This is prediction-stage latency, not necessarily total client-observed HTTP latency, and it may exclude network and queueing time.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(request_predict_seconds_sum{namespace=\"kubeflow\",service=\"iris-classifier-predictor\",model_name=\"iris-classifier\"}[$__rate_interval])) / sum(rate(request_predict_seconds_count{namespace=\"kubeflow\",service=\"iris-classifier-predictor\",model_name=\"iris-classifier\"}[$__rate_interval]))",
+          "legendFormat": "average",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "p95 prediction-stage latency",
+      "description": "Estimates the 95th-percentile prediction-stage latency from Prometheus histogram buckets. Approximately 95% of observations fall at or below this value, while the slowest 5% take longer. This helps reveal tail-latency degradation that an average can hide. During a load test, a sharp increase may indicate contention or saturation. The estimate depends on histogram bucket resolution and sufficient recent traffic; it can be empty when there are not enough samples.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(request_predict_seconds_bucket{namespace=\"kubeflow\",service=\"iris-classifier-predictor\",model_name=\"iris-classifier\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Predictor process resident memory",
+      "description": "Shows the resident memory used by each Iris classifier predictor process, in bytes. Each series represents a pod, identified by its pod label when available. Watch for steadily increasing memory, unusually high usage, or differences between replicas during sustained load. Compare this with the container memory limit to assess OOM risk. This process-level metric is not the same as total container memory usage and may not include all memory accounted for by the container runtime.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes{namespace=\"kubeflow\",service=\"iris-classifier-predictor\"}",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Predictions by Iris category",
+      "type": "barchart",
+      "description": "Shows the number of individual Iris samples classified as setosa, versicolor, or virginica during the selected dashboard time range. Unlike the request-rate panel, this counts samples rather than HTTP calls. The query uses the custom iris_predictions_total counter, so this panel requires that metric to be implemented and exposed by the predictor. If the metric is absent, no bars will appear. Counts are estimated from the counter increase over the selected time range and rounded to whole samples.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "custom": {
+            "axisLabel": "Predicted samples",
+            "fillOpacity": 80,
+            "axisPlacement": "auto",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "class_name",
+        "showValue": "always",
+        "stacking": "none",
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "round(sum by (class_name) (increase(iris_predictions_total{namespace=\"kubeflow\",service=\"iris-classifier-predictor\",model_name=\"iris-classifier\"}[$__range])))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{class_name}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

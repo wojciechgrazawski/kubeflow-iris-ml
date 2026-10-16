@@ -1,0 +1,59 @@
+# Local OrbStack Kubernetes defaults for kube-prometheus-stack.
+# These settings favor a small development cluster over production HA.
+grafana:
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  sidecar:
+    dashboards:
+      enabled: true
+    datasources:
+      enabled: true
+
+prometheus:
+  prometheusSpec:
+    retention: 3d
+    retentionSize: 3GB
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    # For local development, use ephemeral storage (no PVC required).
+    # The Prometheus TSDB will be lost if its pod is recreated.
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+nodeExporter:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+# These control-plane endpoints are often not exposed by local Kubernetes
+# distributions, so disable their monitors to avoid misleading DOWN targets.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false

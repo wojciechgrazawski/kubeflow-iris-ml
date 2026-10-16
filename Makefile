@@ -10,6 +10,18 @@ KFP_VERSION ?= 2.17.0
 KSERVE_VERSION ?= v0.20.0
 KSERVE_INSTALL_URL := https://github.com/kserve/kserve/releases/download/$(KSERVE_VERSION)/kserve-standard-mode-full-install-with-manifests.sh
 
+# Monitoring stack. Pin the chart version so installs are reproducible.
+MONITORING_CHART_VERSION ?= 92.7.0
+MONITORING_RELEASE ?= monitoring
+MONITORING_NAMESPACE ?= monitoring
+MONITORING_CHART ?= prometheus-community/kube-prometheus-stack
+MONITORING_HELM_VALUES ?= monitoring/helm/values-orbstack.yaml
+MONITORING_WAIT_TIMEOUT ?= 600s
+MONITORING_BUILD_DIR := .build/monitoring
+MONITORING_KUSTOMIZE_DIR ?= monitoring/kustomize
+MONITORING_GRAFANA_LOCAL_PORT ?= 3000
+MONITORING_PROMETHEUS_LOCAL_PORT ?= 9090
+
 KFP_BUILD_DIR := .build/kubeflow
 KFP_REGISTRY := ghcr.io/kubeflow
 # Deployments that must be healthy (install fails if they are not).
@@ -35,7 +47,11 @@ PREDICTOR_DOCKERFILE ?= serving/Dockerfile
         run-pipeline pipeline-logs pipeline-status \
         build-predictor deploy-kserve kserve-status kserve-logs \
         kserve-port-forward kserve-predict \
-        kubeflow-ui clean-status clean-ml
+        kubeflow-ui clean-status clean-ml \
+        check-monitoring-tools monitoring-repo render-monitoring install-monitoring apply-monitoring-config \
+        verify-monitoring monitoring-status monitoring-grafana monitoring-grafana-password \
+        monitoring-prometheus uninstall-monitoring \
+        monitoring-install monitoring-uninstall
 
 # --------------------------------------------------
 # Python environment and tests
@@ -47,6 +63,8 @@ help:
 	@echo "KFP:    make compile | make run-pipeline | make pipeline-status | make pipeline-logs"
 	@echo "KServe: make build-predictor | make deploy-kserve | make kserve-status | make kserve-port-forward | make kserve-predict"
 	@echo "Cluster: make check-cluster | make install-kubeflow | make install-kserve | make install-all | make clean-status"
+	@echo "Monitoring: make render-monitoring | make install-monitoring | make apply-monitoring-config | make verify-monitoring | make monitoring-status"
+	@echo "           make monitoring-grafana | make monitoring-grafana-password | make monitoring-prometheus | make uninstall-monitoring"
 
 # Create .venv only when it does not already exist. No activation is needed:
 # every Python target calls $(VENV_PYTHON) directly.
@@ -258,6 +276,96 @@ kserve-predict:
 		-H 'Content-Type: application/json' \
 		-d '{"instances":[[5.1,3.5,1.4,0.2],[6.7,3.0,5.2,2.3]]}'
 
+
+# --------------------------------------------------
+# Local observability: Prometheus + Grafana
+# --------------------------------------------------
+
+# Use the same explicit Makefile-driven lifecycle as Kubeflow and KServe.
+# Review `kubectl config current-context` before installation; connectivity
+# checks alone cannot prove that the selected cluster is your local OrbStack.
+check-monitoring-tools:
+	@command -v helm >/dev/null || { echo "ERROR: Helm is required. Install Helm 3+ first." >&2; exit 1; }
+	@test -f "$(MONITORING_HELM_VALUES)" || { echo "ERROR: Helm values file not found: $(MONITORING_HELM_VALUES)" >&2; exit 1; }
+	@echo "Monitoring chart: $(MONITORING_CHART) version $(MONITORING_CHART_VERSION)"
+
+monitoring-repo: check-monitoring-tools
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+	helm repo update
+
+# Render the pinned chart to a local file for review; this does not change the cluster.
+render-monitoring: monitoring-repo
+	@mkdir -p "$(MONITORING_BUILD_DIR)"
+	helm template $(MONITORING_RELEASE) $(MONITORING_CHART) \
+		--version $(MONITORING_CHART_VERSION) \
+		--namespace $(MONITORING_NAMESPACE) \
+		--values $(MONITORING_HELM_VALUES) \
+		> "$(MONITORING_BUILD_DIR)/helm-rendered.yaml"
+	@echo "Rendered manifests: $(MONITORING_BUILD_DIR)/helm-rendered.yaml"
+
+# Installs/upgrades only the upstream monitoring stack. Project-owned
+# ServiceMonitor and PrometheusRule resources will be managed separately via Kustomize.
+install-monitoring: check-cluster check-monitoring-tools monitoring-repo
+	@echo "Installing kube-prometheus-stack $(MONITORING_CHART_VERSION) into namespace $(MONITORING_NAMESPACE)..."
+	helm upgrade --install $(MONITORING_RELEASE) $(MONITORING_CHART) \
+		--version $(MONITORING_CHART_VERSION) \
+		--namespace $(MONITORING_NAMESPACE) \
+		--create-namespace \
+		--values $(MONITORING_HELM_VALUES) \
+		--wait --timeout $(MONITORING_WAIT_TIMEOUT)
+	@$(MAKE) --no-print-directory -f "$(firstword $(MAKEFILE_LIST))" verify-monitoring
+	@$(MAKE) --no-print-directory -f "$(firstword $(MAKEFILE_LIST))" apply-monitoring-config
+
+# Apply project-owned ServiceMonitor and Grafana dashboard resources.
+# Run this again after editing files under monitoring/kustomize.
+apply-monitoring-config: check-cluster
+	@test -d "$(MONITORING_KUSTOMIZE_DIR)" || { \
+		echo "ERROR: Monitoring Kustomize directory not found: $(MONITORING_KUSTOMIZE_DIR)" >&2; \
+		exit 1; \
+	}
+	@kubectl get namespace $(MONITORING_NAMESPACE) >/dev/null
+	@echo "Applying project monitoring resources from $(MONITORING_KUSTOMIZE_DIR)..."
+	kubectl apply -k "$(MONITORING_KUSTOMIZE_DIR)"
+
+verify-monitoring:
+	@echo "Helm release:"
+	helm status $(MONITORING_RELEASE) --namespace $(MONITORING_NAMESPACE)
+	@echo "Monitoring workloads:"
+	kubectl get deployments,statefulsets,pods,services -n $(MONITORING_NAMESPACE)
+	@echo "Waiting for monitoring pods to become Ready..."
+	kubectl wait --for=condition=Ready pod \
+		-l app.kubernetes.io/instance=$(MONITORING_RELEASE) \
+		-n $(MONITORING_NAMESPACE) --timeout=$(MONITORING_WAIT_TIMEOUT)
+
+monitoring-status:
+	kubectl get deployments,statefulsets,pods,svc -n $(MONITORING_NAMESPACE)
+	kubectl get events -n $(MONITORING_NAMESPACE) --sort-by=.lastTimestamp
+
+monitoring-grafana:
+	kubectl port-forward -n $(MONITORING_NAMESPACE) \
+		svc/$(MONITORING_RELEASE)-grafana $(MONITORING_GRAFANA_LOCAL_PORT):80
+
+# Python base64 decoding works on both macOS and Linux (BSD/GNU base64 flags differ).
+monitoring-grafana-password:
+	@kubectl get secret $(MONITORING_RELEASE)-grafana -n $(MONITORING_NAMESPACE) \
+		-o jsonpath='{.data.admin-password}' | $(PYTHON) -c 'import base64,sys; print(base64.b64decode(sys.stdin.read()).decode())'
+
+monitoring-prometheus:
+	kubectl port-forward -n $(MONITORING_NAMESPACE) \
+		svc/$(MONITORING_RELEASE)-kube-prometheus-prometheus $(MONITORING_PROMETHEUS_LOCAL_PORT):9090
+
+uninstall-monitoring:
+	@echo "WARNING: this removes the $(MONITORING_RELEASE) Helm release and deletes namespace $(MONITORING_NAMESPACE), including all resources and any monitoring data stored there."
+	@echo "Current context: $$(kubectl config current-context)"
+	@read -r -p "Type yes to continue: " confirm; \
+	if [ "$$confirm" != "yes" ]; then echo "Cancelled."; exit 1; fi
+	-helm uninstall $(MONITORING_RELEASE) --namespace $(MONITORING_NAMESPACE)
+	kubectl delete namespace $(MONITORING_NAMESPACE) --ignore-not-found=true --wait=true
+
+# Backward-compatible aliases for the earlier target names.
+monitoring-install: install-monitoring
+monitoring-uninstall: uninstall-monitoring
+
 # --------------------------------------------------
 # Inspect installed resources
 # --------------------------------------------------
@@ -271,6 +379,9 @@ clean-status:
 	@echo ""
 	@echo "KServe namespace:"
 	-kubectl get all -n kserve
+	@echo ""
+	@echo "Monitoring namespace:"
+	-kubectl get all -n $(MONITORING_NAMESPACE)
 	@echo ""
 	@echo "KServe webhooks:"
 	-kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o name | grep 'serving.kserve.io' || true

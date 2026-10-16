@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: iris-classifier
+  namespace: kubeflow
+  labels:
+    release: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - kubeflow
+  selector:
+    matchLabels:
+      app: isvc.iris-classifier-predictor
+  endpoints:
+    - port: http1
+      path: /metrics
+      interval: 15s
+      scheme: http

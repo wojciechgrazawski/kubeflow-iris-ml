@@ -45,6 +45,7 @@ credentials/
 
 # Build and packaging output
 build/
+.build/
 dist/
 *.egg-info/
 
