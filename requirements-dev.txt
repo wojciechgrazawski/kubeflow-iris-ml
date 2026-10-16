@@ -1,0 +1,5 @@
+-r requirements-pipeline.txt
+-r requirements-automation.txt
+pytest
+httpx
+PyYAML

@@ -1,0 +1,45 @@
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: iris-pipeline-submit
+  namespace: kubeflow
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3900
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: iris-pipeline-submit
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: submitter
+          image: iris-pipeline-runner:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KFP_HOST
+              value: "http://ml-pipeline.kubeflow.svc.cluster.local:8888"
+            - name: PIPELINE_FILE
+              value: "/app/pipeline/iris_pipeline.yaml"
+            - name: PIPELINE_TIMEOUT_SECONDS
+              value: "3600"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

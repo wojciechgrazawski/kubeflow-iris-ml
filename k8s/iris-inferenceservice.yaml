@@ -1,0 +1,60 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: iris-classifier
+  namespace: kubeflow
+spec:
+  predictor:
+    containers:
+      - name: kserve-container
+        # OrbStack local image; change this to a reachable registry for remote clusters.
+        image: iris-custom-predictor:0.1
+        imagePullPolicy: IfNotPresent
+        ports:
+          - name: http1
+            containerPort: 8080
+            protocol: TCP
+        env:
+          - name: MODEL_NAME
+            value: iris-classifier
+          - name: MODEL_VERSION
+            value: v1
+          - name: MODEL_URI
+            value: s3://mlpipeline/models/iris-classifier/versions/v1/
+          - name: S3_ENDPOINT
+            value: http://seaweedfs.kubeflow.svc.cluster.local:9000
+          - name: AWS_DEFAULT_REGION
+            value: us-east-1
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: mlpipeline-minio-artifact
+                key: accesskey
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: mlpipeline-minio-artifact
+                key: secretkey
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+        readinessProbe:
+          httpGet:
+            path: /v1/models/iris-classifier
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 12
+        livenessProbe:
+          httpGet:
+            path: /v1/models/iris-classifier
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 6

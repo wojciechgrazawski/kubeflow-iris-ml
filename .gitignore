@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python tooling and test caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+
+# IDE and editor settings
+.idea/
+.vscode/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+
+# Local model experiments and generated outputs
+mlruns/
+outputs/
+runs/
+tmp/
+
+# Keep the current serving model artifacts under version control.
+
+# Keep the compiled Kubeflow pipeline specification under version control.
+# Do not ignore iris_pipeline.yaml.
+
+# Kubernetes local state
+.kube/

@@ -1,0 +1,359 @@
+# PIPELINE DEFINITION
+# Name: iris-ml-pipeline
+# Description: Prepare Iris data, train a classifier, evaluate it, and publish the model to SeaweedFS S3.
+# Inputs:
+#    model_version: str [Default: 'v1']
+components:
+  comp-evaluate-model:
+    executorLabel: exec-evaluate-model
+    inputDefinitions:
+      artifacts:
+        dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-prepare-data:
+    executorLabel: exec-prepare-data
+    outputDefinitions:
+      artifacts:
+        dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-publish-model:
+    executorLabel: exec-publish-model
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        model_version:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        manifest_uri:
+          parameterType: STRING
+        model_uri:
+          parameterType: STRING
+  comp-train-model:
+    executorLabel: exec-train-model
+    inputDefinitions:
+      artifacts:
+        dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-evaluate-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'scikit-learn'\
+          \ 'pandas' 'joblib'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_model(\n        dataset: Input[Dataset],\n        model:\
+          \ Input[Model],\n        metrics: Output[Metrics],\n):\n    import json\n\
+          \    import joblib\n    import pandas as pd\n    from sklearn.metrics import\
+          \ (\n        accuracy_score,\n        classification_report,\n        confusion_matrix,\n\
+          \    )\n    from sklearn.model_selection import train_test_split\n\n   \
+          \ frame = pd.read_csv(dataset.path)\n    X = frame.drop(columns=[\"target\"\
+          ])\n    y = frame[\"target\"]\n\n    _, X_test, _, y_test = train_test_split(\n\
+          \        X,\n        y,\n        test_size=0.2,\n        random_state=42,\n\
+          \        stratify=y,\n    )\n\n    classifier = joblib.load(model.path)\n\
+          \    predictions = classifier.predict(X_test)\n\n    accuracy = float(accuracy_score(y_test,\
+          \ predictions))\n    report = classification_report(\n        y_test,\n\
+          \        predictions,\n        output_dict=True,\n        zero_division=0,\n\
+          \    )\n    matrix = confusion_matrix(\n        y_test, predictions\n  \
+          \  ).tolist()\n\n    metrics.log_metric(\"accuracy\", accuracy)\n    metrics.log_metric(\"\
+          test_rows\", len(y_test))\n    metrics.metadata[\"classification_report\"\
+          ] = report\n    metrics.metadata[\"confusion_matrix\"] = matrix\n\n    print(f\"\
+          Accuracy: {accuracy:.4f}\")\n    print(json.dumps(report, indent=2))\n \
+          \   print(json.dumps(matrix))\n\n    if accuracy < 0.80:\n        raise\
+          \ ValueError(\n            f\"Model accuracy {accuracy:.4f} is below 0.80\"\
+          \n        )\n\n"
+        image: python:3.11
+    exec-prepare-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - prepare_data
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'scikit-learn'\
+          \ 'pandas'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef prepare_data(dataset: Output[Dataset]):\n    import os\n    import\
+          \ pandas as pd\n    from sklearn.datasets import load_iris\n\n    iris =\
+          \ load_iris(as_frame=True)\n    frame = iris.frame\n\n    os.makedirs(os.path.dirname(dataset.path),\
+          \ exist_ok=True)\n    frame.to_csv(dataset.path, index=False)\n\n    dataset.metadata[\"\
+          format\"] = \"csv\"\n    dataset.metadata[\"target_column\"] = \"target\"\
+          \n    dataset.metadata[\"rows\"] = len(frame)\n    dataset.metadata[\"class_names\"\
+          ] = iris.target_names.tolist()\n\n    print(f\"Prepared dataset: {dataset.path}\"\
+          )\n    print(f\"Rows: {len(frame)}\")\n\n"
+        image: python:3.11
+    exec-publish-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - publish_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'boto3'  && \
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef publish_model(\n        model: Input[Model],\n        model_version:\
+          \ str,\n        model_uri: OutputPath(str),\n        manifest_uri: OutputPath(str),\n\
+          ):\n    import hashlib\n    import json\n    import os\n    from datetime\
+          \ import datetime, timezone\n\n    import boto3\n\n    endpoint_url = os.getenv(\n\
+          \        \"S3_ENDPOINT\",\n        \"http://seaweedfs.kubeflow.svc.cluster.local:9000\"\
+          ,\n    )\n    bucket = os.getenv(\"S3_BUCKET\", \"mlpipeline\")\n\n    access_key\
+          \ = os.environ[\"AWS_ACCESS_KEY_ID\"]\n    secret_key = os.environ[\"AWS_SECRET_ACCESS_KEY\"\
+          ]\n\n    if (\n            not model_version\n            or \"/\" in model_version\n\
+          \            or \"..\" in model_version\n    ):\n        raise ValueError(\n\
+          \            f\"Invalid model version: {model_version!r}\"\n        )\n\n\
+          \    prefix = (\n        f\"models/iris-classifier/versions/{model_version}\"\
+          \n    )\n    model_key = f\"{prefix}/model.joblib\"\n    manifest_key =\
+          \ f\"{prefix}/manifest.json\"\n\n    s3 = boto3.client(\n        \"s3\"\
+          ,\n        endpoint_url=endpoint_url,\n        aws_access_key_id=access_key,\n\
+          \        aws_secret_access_key=secret_key,\n        region_name=\"us-east-1\"\
+          ,\n    )\n\n    s3.head_bucket(Bucket=bucket)\n\n    with open(model.path,\
+          \ \"rb\") as file:\n        model_bytes = file.read()\n\n    model_sha256\
+          \ = hashlib.sha256(model_bytes).hexdigest()\n\n    s3.put_object(\n    \
+          \    Bucket=bucket,\n        Key=model_key,\n        Body=model_bytes,\n\
+          \        ContentType=\"application/octet-stream\",\n    )\n\n    published_model_uri\
+          \ = f\"s3://{bucket}/{prefix}/\"\n    published_manifest_uri = f\"s3://{bucket}/{manifest_key}\"\
+          \n\n    manifest = {\n        \"model_name\": \"iris-classifier\",\n   \
+          \     \"model_version\": model_version,\n        \"framework\": \"scikit-learn\"\
+          ,\n        \"model_type\": \"LogisticRegression\",\n        \"model_file\"\
+          : \"model.joblib\",\n        \"model_sha256\": model_sha256,\n        \"\
+          model_uri\": published_model_uri,\n        \"manifest_uri\": published_manifest_uri,\n\
+          \        \"created_at\": datetime.now(timezone.utc).isoformat(),\n     \
+          \   \"s3_endpoint\": endpoint_url,\n        \"features\": [\n          \
+          \  \"sepal length (cm)\",\n            \"sepal width (cm)\",\n         \
+          \   \"petal length (cm)\",\n            \"petal width (cm)\",\n        ],\n\
+          \        \"classes\": [0, 1, 2],\n        \"class_names\": {\n         \
+          \   \"0\": \"setosa\",\n            \"1\": \"versicolor\",\n           \
+          \ \"2\": \"virginica\",\n        },\n    }\n\n    s3.put_object(\n     \
+          \   Bucket=bucket,\n        Key=manifest_key,\n        Body=json.dumps(manifest,\
+          \ indent=2).encode(\"utf-8\"),\n        ContentType=\"application/json\"\
+          ,\n    )\n\n    with open(model_uri, \"w\", encoding=\"utf-8\") as file:\n\
+          \        file.write(published_model_uri)\n\n    with open(manifest_uri,\
+          \ \"w\", encoding=\"utf-8\") as file:\n        file.write(published_manifest_uri)\n\
+          \n    print(f\"Model uploaded: s3://{bucket}/{model_key}\")\n    print(f\"\
+          Manifest uploaded: {published_manifest_uri}\")\n    print(f\"KServe storage\
+          \ URI: {published_model_uri}\")\n\n"
+        env:
+        - name: S3_ENDPOINT
+          value: http://seaweedfs.kubeflow.svc.cluster.local:9000
+        - name: S3_BUCKET
+          value: mlpipeline
+        image: python:3.11
+    exec-train-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'scikit-learn'\
+          \ 'pandas' 'joblib'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model(\n        dataset: Input[Dataset],\n        model:\
+          \ Output[Model],\n):\n    import os\n    import joblib\n    import pandas\
+          \ as pd\n    from sklearn.datasets import load_iris\n    from sklearn.linear_model\
+          \ import LogisticRegression\n\n    frame = pd.read_csv(dataset.path)\n \
+          \   X = frame.drop(columns=[\"target\"])\n    y = frame[\"target\"]\n\n\
+          \    classifier = LogisticRegression(\n        max_iter=500,\n        random_state=42,\n\
+          \    )\n    classifier.fit(X, y)\n\n    os.makedirs(os.path.dirname(model.path),\
+          \ exist_ok=True)\n    joblib.dump(classifier, model.path)\n\n    model.metadata[\"\
+          framework\"] = \"scikit-learn\"\n    model.metadata[\"model_type\"] = \"\
+          LogisticRegression\"\n    model.metadata[\"target_column\"] = \"target\"\
+          \n    model.metadata[\"feature_names\"] = list(X.columns)\n    model.metadata[\"\
+          classes\"] = [\n        int(value) for value in classifier.classes_\n  \
+          \  ]\n    model.metadata[\"class_names\"] = (\n        load_iris().target_names.tolist()\n\
+          \    )\n\n    print(f\"Model saved: {model.path}\")\n    print(f\"Training\
+          \ rows: {len(frame)}\")\n\n"
+        image: python:3.11
+pipelineInfo:
+  description: Prepare Iris data, train a classifier, evaluate it, and publish the
+    model to SeaweedFS S3.
+  name: iris-ml-pipeline
+root:
+  dag:
+    tasks:
+      evaluate-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-model
+        dependentTasks:
+        - prepare-data
+        - train-model
+        inputs:
+          artifacts:
+            dataset:
+              taskOutputArtifact:
+                outputArtifactKey: dataset
+                producerTask: prepare-data
+            model:
+              taskOutputArtifact:
+                outputArtifactKey: model
+                producerTask: train-model
+        taskInfo:
+          name: evaluate-model
+      prepare-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-prepare-data
+        taskInfo:
+          name: prepare-data
+      publish-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-publish-model
+        dependentTasks:
+        - evaluate-model
+        - train-model
+        inputs:
+          artifacts:
+            model:
+              taskOutputArtifact:
+                outputArtifactKey: model
+                producerTask: train-model
+          parameters:
+            model_version:
+              componentInputParameter: model_version
+        taskInfo:
+          name: publish-model
+      train-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model
+        dependentTasks:
+        - prepare-data
+        inputs:
+          artifacts:
+            dataset:
+              taskOutputArtifact:
+                outputArtifactKey: dataset
+                producerTask: prepare-data
+        taskInfo:
+          name: train-model
+  inputDefinitions:
+    parameters:
+      model_version:
+        defaultValue: v1
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-publish-model:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: accesskey
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: secretkey
+            optional: false
+            secretName: mlpipeline-minio-artifact
+            secretNameParameter:
+              runtimeValue:
+                constant: mlpipeline-minio-artifact
